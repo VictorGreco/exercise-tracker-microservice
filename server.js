@@ -52,13 +52,13 @@ app.get('/', (req, res) => {
 	res.sendFile(__dirname + '/views/index.html')
 });
 
-app.get('/api/users', async(req, res) => {
+app.get('/api/users', async (req, res) => {
 	const allUsers = await User.find().select('_id username');
 
 	res.send(allUsers);
 })
 
-app.post('/api/users', async(req, res) => {
+app.post('/api/users', async (req, res) => {
 	const { username } = req.body;
 	const newUser = new User({ username });
 	const savedUser = await newUser.save();
@@ -66,49 +66,92 @@ app.post('/api/users', async(req, res) => {
 	res.json({ username: savedUser.username, _id: savedUser._id });
 })
 
-app.post('/api/users/:_id/exercises', async(req, res) => {
-		const { _id } = req.params;
-		const { description, duration, date='' } = req.body;
+app.post('/api/users/:_id/exercises', async (req, res) => {
+	const { _id } = req.params;
+	const { description, duration, date = '' } = req.body;
 
-		const sanitizedDate = date.replaceAll('-', ' ');
-		const sanitizedDuration = parseInt(duration, 10);
-		const dateOrDefaultDate = date === '' ? new Date().toDateString() : new Date(sanitizedDate).toDateString();
+	const sanitizedDate = date.replaceAll('-', ' ');
+	const sanitizedDuration = parseInt(duration, 10);
+	const dateOrDefaultDate = date === '' ? new Date().toDateString() : new Date(sanitizedDate).toDateString();
 
-		const user = await User.findById({ _id });
+	const user = await User.findById({ _id });
+
+	if (user) {
 		const newExercise = new Exercise({
 			userId: user._id,
-			username: user.username, 
+			username: user.username,
 			description,
-			duration: sanitizedDuration, 
+			duration: sanitizedDuration,
 			date: dateOrDefaultDate
 		});
 
 		const savedExercise = await newExercise.save();
-	
-		res.json({ 
+
+		res.json({
 			_id: savedExercise.userId,
 			username: savedExercise.username,
 			description: savedExercise.description,
 			duration: savedExercise.duration,
 			date: savedExercise.date
 		})
+	} else {
+		res.json({ error: 'User not valid' })
+	}
 })
 
-app.get('/api/users/:_id/logs', async(req, res) => {
+app.get('/api/users/:_id/logs', async (req, res) => {
 	const { _id } = req.params;
+	const { from = null, to = null, limit = null } = req.query;
 
-	const exercisesByUserId = await Exercise.find({ userId: _id });
+	const sanitizedFromTimestamp = from && new Date(from.replace('-', ' ')).getTime();
+	const sanitizedToTimestamp = to && new Date(to.replace('-', ' ')).getTime();
 
+	const userById = await User.findById({ _id });
 
-	if (exercisesByUserId.length > 0) {
-		const username = exercisesByUserId[0].username;
-		const reducedExercisesFields = exercisesByUserId.map(({ description, duration, date }) => ({ description, duration, date }) );
+	let exercisesByUserId;
+
+	const filterFromToDatesCallback = ({ date }) => {
+		const dateTimestamp = new Date(date).getTime();
+
+		return dateTimestamp >= sanitizedFromTimestamp && dateTimestamp <= sanitizedToTimestamp;
+	}
+
+	if (sanitizedFromTimestamp && sanitizedToTimestamp && limit) {
+		exercisesByUserId = await Exercise
+			.find({ userId: _id })
+			.select({ _id: 0, duration: 1, date: 1, description: 1 })
+			.limit(+limit);
+
+		exercisesByUserId = exercisesByUserId.filter(filterFromToDatesCallback)
+
+	} else if (sanitizedFromTimestamp && sanitizedToTimestamp && !limit) {
+		exercisesByUserId = await Exercise
+			.find({ userId: _id })
+			.select({ _id: 0, duration: 1, date: 1, description: 1 });
+
+		exercisesByUserId = exercisesByUserId.filter(filterFromToDatesCallback)
+
+	} else if (!sanitizedFromTimestamp && !sanitizedToTimestamp && limit) {
+		exercisesByUserId = await Exercise
+			.find({ userId: _id })
+			.select({ _id: 0, duration: 1, date: 1, description: 1 })
+			.limit(+limit);
+
+	} else if (!sanitizedFromTimestamp && !sanitizedToTimestamp && !limit) {
+		exercisesByUserId = await Exercise
+			.find({ userId: _id })
+			.select({ _id: 0, duration: 1, date: 1, description: 1 });
+	}
+
+	const exercisesByUserIdLength = exercisesByUserId.length;
+
+	if (exercisesByUserIdLength > 0) {
 
 		res.json({
-			username,
-			count: exercisesByUserId.length,
-			_id,
-			log: reducedExercisesFields
+			username: userById.username,
+			count: exercisesByUserIdLength,
+			_id: userById._id,
+			log: exercisesByUserId
 		})
 	}
 })
