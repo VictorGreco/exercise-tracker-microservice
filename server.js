@@ -85,32 +85,26 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 		const dateOrDefaultDate = date === '' ? new Date().toDateString() : new Date(sanitizedDate).toDateString();
 
 		const user = await User.findById({ _id });
+		const newExercise = new Exercise({
+			userId: user._id,
+			username: user.username,
+			description,
+			duration: sanitizedDuration,
+			date: dateOrDefaultDate
+		});
 
-		if (user) {
-			const newExercise = new Exercise({
-				userId: user._id,
-				username: user.username,
-				description,
-				duration: sanitizedDuration,
-				date: dateOrDefaultDate
-			});
+		const savedExercise = await newExercise.save();
 
-			const savedExercise = await newExercise.save();
-
-			res.json({
-				_id: savedExercise.userId,
-				username: savedExercise.username,
-				description: savedExercise.description,
-				duration: savedExercise.duration,
-				date: savedExercise.date
-			})
-		} else {
-			res.json({ error: 'User not valid' })
-		}
+		res.json({
+			_id: savedExercise.userId,
+			username: savedExercise.username,
+			description: savedExercise.description,
+			duration: savedExercise.duration,
+			date: savedExercise.date
+		})
 	} catch (err) {
 		res.send(err.message)
 	}
-
 })
 
 app.get('/api/users/:_id/logs', async (req, res) => {
