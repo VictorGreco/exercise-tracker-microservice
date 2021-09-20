@@ -14,7 +14,29 @@ const userSchema = new Schema({
 	}
 })
 
+const responseSchema = new Schema({
+	path: String,
+	params: Object,
+	body: Object,
+	query: Object,
+	method: String,
+	response: Object
+})
+
+const logSchema = new Schema({
+	path: String,
+	params: Object,
+	body: Object,
+	query: Object,
+	method: String,
+	status: String,
+	message: String
+})
+
 const exerciseSchema = new Schema({
+	path: {
+		type: String
+	},
 	userId: {
 		type: Schema.ObjectId,
 		required: true
@@ -39,22 +61,63 @@ const exerciseSchema = new Schema({
 
 const User = mongoose.model('User', userSchema)
 const Exercise = mongoose.model('Exercise', exerciseSchema)
+const Log = mongoose.model('Log', logSchema)
+const Response = mongoose.model('Response', responseSchema)
 
-const handleException = (message) => `Path ${message.split(': Path ')[1] || '`duration` is required.'}`;
+const handleException = async (req, res, message) => {
+	const PARSED_MESSAGE = message
+
+	const errorLog = new Log({
+		path: req.path,
+		params: req.params,
+		body: req.body,
+		query: req.query,
+		method: req.method,
+		message: PARSED_MESSAGE
+	})
+
+	await errorLog.save()
+
+	return res.send(PARSED_MESSAGE)
+};
+
+const persistLogMiddleware = async (req, res, next) => {
+	try {
+		const newLog = new Log({
+			path: req.path,
+			params: req.params,
+			body: req.body,
+			query: req.query,
+			method: req.method,
+			status: 'success'
+		})
+
+		await newLog.save()
+		next()
+	} catch (error) {
+		const errorLog = new Log({
+			message: handleException(error.message)
+		})
+
+		await errorLog.save()
+
+		next()
+	}
+}
 
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-
 
 app.use(cors())
 app.use(json())
 app.use(urlencoded({ extended: false }))
 app.use(express.static('public'))
+app.all('*', persistLogMiddleware)
 
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
 	res.sendFile(__dirname + '/views/index.html')
 });
 
-app.get('/healthcheck', (req, res) => {
+app.get('/healthcheck', async (req, res) => {
 	res.send({ message: 'OK' });
 })
 
@@ -64,10 +127,12 @@ app.get('/api/users', async (req, res) => {
 
 		res.send(allUsers);
 	} catch (error) {
-		res.send(handleException(error.message));
+		await handleException(req, res, error.message)
 	}
 
 })
+
+
 
 app.post('/api/users', async (req, res) => {
 	try {
@@ -78,16 +143,16 @@ app.post('/api/users', async (req, res) => {
 
 		res.json({ username: savedUser.username, _id: savedUser._id });
 	} catch (error) {
-		res.send(handleException(error.message));
+		await handleException(req, res, error.message)
 	}
 })
 
 app.post('/api/users/:_id/exercises', async (req, res) => {
 	try {
 		const { _id } = req.params;
-		const { description, duration, date = '' } = req.body;
+		const { description, duration, date = null } = req.body;
 
-		const sanitizedDate = date.replaceAll('-', ' ');
+		const sanitizedDate = (!isNaN(new Date(date)) && new Date(date)) || new Date();
 		const sanitizedDuration = parseInt(duration, 10);
 		const dateOrDefaultDate = date === '' ? new Date().toDateString() : new Date(sanitizedDate).toDateString();
 
@@ -97,7 +162,8 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 			username: user.username,
 			description,
 			duration: sanitizedDuration,
-			date: dateOrDefaultDate
+			date: dateOrDefaultDate,
+			path: req.path
 		});
 
 		const savedExercise = await newExercise.save();
@@ -110,7 +176,7 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 			date: savedExercise.date
 		})
 	} catch (error) {
-		res.send(handleException(error.message));
+		await handleException(req, res, error)
 	}
 })
 
@@ -119,8 +185,8 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 		const { _id } = req.params;
 		const { from = null, to = null, limit = null } = req.query;
 
-		const sanitizedFromTimestamp = from && new Date(from.replace('-', ' ')).getTime();
-		const sanitizedToTimestamp = to && new Date(to.replace('-', ' ')).getTime();
+		const sanitizedFromTimestamp = from && new Date(from).getTime();
+		const sanitizedToTimestamp = to && new Date(to).getTime();
 
 		const userById = await User.findById({ _id });
 
@@ -132,18 +198,26 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 			return dateTimestamp >= sanitizedFromTimestamp && dateTimestamp <= sanitizedToTimestamp;
 		}
 
+		const mapToDateStringHandler = ({ description, duration, date }) => {
+			return {
+				description,
+				duration,
+				date: new Date(date).toDateString()
+			}
+		}
+
 		if (sanitizedFromTimestamp && sanitizedToTimestamp && limit) {
 			exercisesByUserId = await Exercise
 				.find({ userId: _id })
 				.select({ _id: 0, duration: 1, date: 1, description: 1 })
-				.limit(+limit);
+				.limit(+limit)
 
 			exercisesByUserId = exercisesByUserId.filter(filterFromToDatesCallback)
 
 		} else if (sanitizedFromTimestamp && sanitizedToTimestamp && !limit) {
 			exercisesByUserId = await Exercise
 				.find({ userId: _id })
-				.select({ _id: 0, duration: 1, date: 1, description: 1 });
+				.select({ _id: 0, duration: 1, date: 1, description: 1 })
 
 			exercisesByUserId = exercisesByUserId.filter(filterFromToDatesCallback)
 
@@ -151,27 +225,40 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 			exercisesByUserId = await Exercise
 				.find({ userId: _id })
 				.select({ _id: 0, duration: 1, date: 1, description: 1 })
-				.limit(+limit);
+				.limit(+limit)
 
 		} else if (!sanitizedFromTimestamp && !sanitizedToTimestamp && !limit) {
 			exercisesByUserId = await Exercise
 				.find({ userId: _id })
-				.select({ _id: 0, duration: 1, date: 1, description: 1 });
+				.select({ _id: 0, duration: 1, date: 1, description: 1 })
 		}
 
 		const exercisesByUserIdLength = exercisesByUserId.length;
 
-		if (exercisesByUserIdLength > 0) {
-
-			res.json({
+		const newResponse = new Response({
+			path: req.path,
+			params: req.params,
+			body: req.body,
+			query: req.query,
+			method: req.method,
+			response: {
 				username: userById.username,
 				count: exercisesByUserIdLength,
 				_id: userById._id,
 				log: exercisesByUserId
-			})
-		}
+			}
+		})
+
+		await newResponse.save()
+
+		res.json({
+			username: userById.username,
+			count: exercisesByUserIdLength,
+			_id: userById._id,
+			log: exercisesByUserId
+		})
 	} catch (error) {
-		res.send(handleException(error.message));
+		await handleException(req, res, error.message)
 	}
 })
 

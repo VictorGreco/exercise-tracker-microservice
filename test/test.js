@@ -197,8 +197,8 @@ describe('Test Exercise Tracker Microservice', () => {
                 .get(`/api/users/${_id}/logs?from=${MOCK_FROM}&to=${MOCK_TO}&limit=${MOCK_LIMIT}`)
                 .expect(200)
                 .end((err, res) => {
-                    const everyLogIsCorrect = res.body.log.every(item => 
-                        item.date === FROM_DATE_PARSED || 
+                    const everyLogIsCorrect = res.body.log.every(item =>
+                        item.date === FROM_DATE_PARSED ||
                         item.date === TO_DATE_PARSED)
 
                     assert.equal(res.body._id, _id)
