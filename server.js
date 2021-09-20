@@ -40,6 +40,8 @@ const exerciseSchema = new Schema({
 const User = mongoose.model('User', userSchema)
 const Exercise = mongoose.model('Exercise', exerciseSchema)
 
+const handleException = (message) => `Path ${message.split(': Path ')[1] || '`duration` is required.'}`;
+
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
 
 
@@ -52,14 +54,19 @@ app.get('/', (req, res) => {
 	res.sendFile(__dirname + '/views/index.html')
 });
 
+app.get('/healthcheck', (req, res) => {
+	res.send({ message: 'OK' });
+})
+
 app.get('/api/users', async (req, res) => {
 	try {
 		const allUsers = await User.find().select('_id username');
 
 		res.send(allUsers);
-	} catch (err) {
-		res.send(err.message);
+	} catch (error) {
+		res.send(handleException(error.message));
 	}
+
 })
 
 app.post('/api/users', async (req, res) => {
@@ -70,8 +77,8 @@ app.post('/api/users', async (req, res) => {
 		const savedUser = await newUser.save();
 
 		res.json({ username: savedUser.username, _id: savedUser._id });
-	} catch (err) {
-		res.send(err.message);
+	} catch (error) {
+		res.send(handleException(error.message));
 	}
 })
 
@@ -102,8 +109,8 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 			duration: savedExercise.duration,
 			date: savedExercise.date
 		})
-	} catch (err) {
-		res.send(err.message)
+	} catch (error) {
+		res.send(handleException(error.message));
 	}
 })
 
@@ -163,11 +170,16 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 				log: exercisesByUserId
 			})
 		}
-	} catch (err) {
-		res.send(err.message)
+	} catch (error) {
+		res.send(handleException(error.message));
 	}
 })
 
 const listener = app.listen(process.env.PORT || 3000, () => {
 	console.log('Your app is listening on port ' + listener.address().port)
 })
+
+module.exports = {
+	app,
+	User
+};
