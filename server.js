@@ -78,37 +78,26 @@ const handleException = async (req, res, message) => {
 	return res.send(PARSED_MESSAGE)
 };
 
-const persistLogMiddleware = async (req, res, next) => {
-	try {
-		const newLog = new Log({
-			path: req.path,
-			params: req.params,
-			body: req.body,
-			query: req.query,
-			method: req.method,
-			status: 'success'
-		})
-
-		await newLog.save()
-		next()
-	} catch (error) {
-		const errorLog = new Log({
-			message: handleException(error.message)
-		})
-
-		await errorLog.save()
-
-		next()
-	}
-}
-
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
 
 app.use(cors())
 app.use(json())
 app.use(urlencoded({ extended: false }))
 app.use(express.static('public'))
-app.all('*', persistLogMiddleware)
+
+app.use('/api/users/:_id/logs',({ method, url, query, params, body }, res, next) => {
+	console.log('>>> ', method, url);
+	console.log(' QUERY:', query);
+	console.log(' PRAMS:', params);
+	console.log('  BODY:', body);
+	const _json = res.json;
+	res.json = function (data) {
+	  console.log(' RESLT:', JSON.stringify(data, null, 2));
+	  return _json.call(this, data);
+	};
+	console.log(' ----------------------------');
+	next();
+  });
 
 app.get('/', async (req, res) => {
 	res.sendFile(__dirname + '/views/index.html')
@@ -168,52 +157,49 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 		const { _id } = req.params;
 		const FROM_DATE = new Date(req.query.from)
 		const TO_DATE = new Date(req.query.to)
-		const FROM_TIMESTAMP = !isNaN(FROM_DATE) && FROM_DATE.getTime();
-		const TO_TIMESTAMP = !isNaN(TO_DATE) && TO_DATE.getTime();
-		const LIMIT_INT = parseInt(req.query.limit, 10);
+		const FROM_TIMESTAMP = !isNaN(FROM_DATE) && FROM_DATE.getTime()
+		const TO_TIMESTAMP = !isNaN(TO_DATE) && TO_DATE.getTime()
+		const LIMIT_INT = parseInt(req.query.limit, 10)
+		const FIND_OPTIONS = { userId: _id }
+		const SELECT_OPTIONS = { _id: 0, duration: 1, date: 1, description: 1 }
 
-		const { username } = await User.findById({ _id });
+		const { username } = await User.findById({ _id })
 
-		const filterDateRange = ({ date }) =>
-			new Date(date).getTime() >= FROM_TIMESTAMP && new Date(date).getTime() <= TO_TIMESTAMP;
+		const filterByDateRange = ({ date }) =>
+			new Date(date).getTime() >= FROM_TIMESTAMP && new Date(date).getTime() <= TO_TIMESTAMP
 
 		let log;
 
-		if (FROM_TIMESTAMP && TO_TIMESTAMP && !!LIMIT_INT) {
+		if (FROM_TIMESTAMP && TO_TIMESTAMP && !!LIMIT_INT && LIMIT_INT > 0) {
 			log = await Exercise
-				.find({ userId: _id })
-				.select({ _id: 0, duration: 1, date: 1, description: 1 })
+				.find(FIND_OPTIONS)
+				.select(SELECT_OPTIONS)
 				.limit(LIMIT_INT)
 
-			log = log.filter(filterDateRange)
+			log = log.filter(filterByDateRange)
 
 		} else if (FROM_TIMESTAMP && TO_TIMESTAMP && !LIMIT_INT) {
 			log = await Exercise
-				.find({ userId: _id })
-				.select({ _id: 0, duration: 1, date: 1, description: 1 })
+				.find(FIND_OPTIONS)
+				.select(SELECT_OPTIONS)
 
-			log = log.filter(filterDateRange)
+			log = log.filter(filterByDateRange)
 
-		} else if (!FROM_TIMESTAMP && !TO_TIMESTAMP && !!LIMIT_INT) {
+		} else if (!FROM_TIMESTAMP && !TO_TIMESTAMP && !!LIMIT_INT && LIMIT_INT > 0) {
 			log = await Exercise
-				.find({ userId: _id })
-				.select({ _id: 0, duration: 1, date: 1, description: 1 })
+				.find(FIND_OPTIONS)
+				.select(SELECT_OPTIONS)
 				.limit(LIMIT_INT)
 
 		} else {
 			log = await Exercise
-				.find({ userId: _id })
-				.select({ _id: 0, duration: 1, date: 1, description: 1 })
+				.find(FIND_OPTIONS)
+				.select(SELECT_OPTIONS)
 		}
 
-		const count = log.length;
+		const count = log.length
 
-		let baseResponse = { 
-			_id, 
-			username, 
-			count, 
-			log
-		}
+		let baseResponse = { }
 
 		if (FROM_DATE.toDateString() !== 'Invalid Date') {
 			baseResponse.from = FROM_DATE.toDateString()
@@ -222,6 +208,17 @@ app.get('/api/users/:_id/logs', async (req, res) => {
 		if (TO_DATE.toDateString() !== 'Invalid Date') {
 			baseResponse.to = TO_DATE.toDateString()
 		}
+
+		baseResponse = { _id, username, ...baseResponse, count, log }
+
+		await Response.create({
+			path: req.path,
+			params: req.params,
+			body: req.body,
+			query: req.query,
+			method: req.method,
+			response: baseResponse
+		})
 
 		res.json(baseResponse)
 	} catch (error) {
