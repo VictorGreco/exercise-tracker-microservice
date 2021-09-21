@@ -34,9 +34,6 @@ const logSchema = new Schema({
 })
 
 const exerciseSchema = new Schema({
-	path: {
-		type: String
-	},
 	userId: {
 		type: Schema.ObjectId,
 		required: true
@@ -129,19 +126,14 @@ app.get('/api/users', async (req, res) => {
 	} catch (error) {
 		await handleException(req, res, error.message)
 	}
-
 })
-
-
 
 app.post('/api/users', async (req, res) => {
 	try {
 		const { username } = req.body;
+		const { _id } = await User.create({ username });
 
-		const newUser = new User({ username });
-		const savedUser = await newUser.save();
-
-		res.json({ username: savedUser.username, _id: savedUser._id });
+		res.json({ _id, username });
 	} catch (error) {
 		await handleException(req, res, error.message)
 	}
@@ -150,31 +142,22 @@ app.post('/api/users', async (req, res) => {
 app.post('/api/users/:_id/exercises', async (req, res) => {
 	try {
 		const { _id } = req.params;
-		const { description, duration, date = null } = req.body;
+		const { description } = req.body;
+		const DURATION_INT = parseInt(req.body.duration, 10);
+		const REQ_BODY_DATE = new Date(req.body.date);
+		const DEFAULT_DATE = new Date().toDateString();
+		const DATE_STRING = (!isNaN(REQ_BODY_DATE) && REQ_BODY_DATE.toDateString()) || DEFAULT_DATE;
 
-		const sanitizedDate = (!isNaN(new Date(date)) && new Date(date)) || new Date();
-		const sanitizedDuration = parseInt(duration, 10);
-		const dateOrDefaultDate = date === '' ? new Date().toDateString() : new Date(sanitizedDate).toDateString();
-
-		const user = await User.findById({ _id });
-		const newExercise = new Exercise({
-			userId: user._id,
-			username: user.username,
+		const { username } = await User.findById({ _id });
+		const { duration, date } = await Exercise.create({
+			userId: _id,
+			username,
 			description,
-			duration: sanitizedDuration,
-			date: dateOrDefaultDate,
-			path: req.path
+			duration: DURATION_INT,
+			date: DATE_STRING
 		});
 
-		const savedExercise = await newExercise.save();
-
-		res.json({
-			_id: savedExercise.userId,
-			username: savedExercise.username,
-			description: savedExercise.description,
-			duration: savedExercise.duration,
-			date: savedExercise.date
-		})
+		res.json({ _id, username, description, duration, date });
 	} catch (error) {
 		await handleException(req, res, error)
 	}
@@ -183,80 +166,64 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 app.get('/api/users/:_id/logs', async (req, res) => {
 	try {
 		const { _id } = req.params;
-		const { from = null, to = null, limit = null } = req.query;
+		const FROM_DATE = new Date(req.query.from)
+		const TO_DATE = new Date(req.query.to)
+		const FROM_TIMESTAMP = !isNaN(FROM_DATE) && FROM_DATE.getTime();
+		const TO_TIMESTAMP = !isNaN(TO_DATE) && TO_DATE.getTime();
+		const LIMIT_INT = parseInt(req.query.limit, 10);
 
-		const sanitizedFromTimestamp = from && new Date(from).getTime();
-		const sanitizedToTimestamp = to && new Date(to).getTime();
+		const { username } = await User.findById({ _id });
 
-		const userById = await User.findById({ _id });
+		const filterDateRange = ({ date }) =>
+			new Date(date).getTime() >= FROM_TIMESTAMP && new Date(date).getTime() <= TO_TIMESTAMP;
 
-		let exercisesByUserId;
+		let log;
 
-		const filterFromToDatesCallback = ({ date }) => {
-			const dateTimestamp = new Date(date).getTime();
-
-			return dateTimestamp >= sanitizedFromTimestamp && dateTimestamp <= sanitizedToTimestamp;
-		}
-
-		const mapToDateStringHandler = ({ description, duration, date }) => {
-			return {
-				description,
-				duration,
-				date: new Date(date).toDateString()
-			}
-		}
-
-		if (sanitizedFromTimestamp && sanitizedToTimestamp && limit) {
-			exercisesByUserId = await Exercise
+		if (FROM_TIMESTAMP && TO_TIMESTAMP && !!LIMIT_INT) {
+			log = await Exercise
 				.find({ userId: _id })
 				.select({ _id: 0, duration: 1, date: 1, description: 1 })
-				.limit(+limit)
+				.limit(LIMIT_INT)
 
-			exercisesByUserId = exercisesByUserId.filter(filterFromToDatesCallback)
+			log = log.filter(filterDateRange)
 
-		} else if (sanitizedFromTimestamp && sanitizedToTimestamp && !limit) {
-			exercisesByUserId = await Exercise
+		} else if (FROM_TIMESTAMP && TO_TIMESTAMP && !LIMIT_INT) {
+			log = await Exercise
 				.find({ userId: _id })
 				.select({ _id: 0, duration: 1, date: 1, description: 1 })
 
-			exercisesByUserId = exercisesByUserId.filter(filterFromToDatesCallback)
+			log = log.filter(filterDateRange)
 
-		} else if (!sanitizedFromTimestamp && !sanitizedToTimestamp && limit) {
-			exercisesByUserId = await Exercise
+		} else if (!FROM_TIMESTAMP && !TO_TIMESTAMP && !!LIMIT_INT) {
+			log = await Exercise
 				.find({ userId: _id })
 				.select({ _id: 0, duration: 1, date: 1, description: 1 })
-				.limit(+limit)
+				.limit(LIMIT_INT)
 
-		} else if (!sanitizedFromTimestamp && !sanitizedToTimestamp && !limit) {
-			exercisesByUserId = await Exercise
+		} else {
+			log = await Exercise
 				.find({ userId: _id })
 				.select({ _id: 0, duration: 1, date: 1, description: 1 })
 		}
 
-		const exercisesByUserIdLength = exercisesByUserId.length;
+		const count = log.length;
 
-		const newResponse = new Response({
-			path: req.path,
-			params: req.params,
-			body: req.body,
-			query: req.query,
-			method: req.method,
-			response: {
-				username: userById.username,
-				count: exercisesByUserIdLength,
-				_id: userById._id,
-				log: exercisesByUserId
-			}
-		})
+		let baseResponse = { 
+			_id, 
+			username, 
+			count, 
+			log
+		}
 
-		await newResponse.save()
+		if (FROM_DATE.toDateString() !== 'Invalid Date') {
+			baseResponse.from = FROM_DATE.toDateString()
+		}
 
-		res.json({
-			username: userById.username,
-			count: exercisesByUserIdLength,
-			_id: userById._id,
-			log: exercisesByUserId
-		})
+		if (TO_DATE.toDateString() !== 'Invalid Date') {
+			baseResponse.to = TO_DATE.toDateString()
+		}
+
+		res.json(baseResponse)
 	} catch (error) {
 		await handleException(req, res, error.message)
 	}
